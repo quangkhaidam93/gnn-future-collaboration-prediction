@@ -196,7 +196,6 @@ name = "gnn-future-collaboration-prediction"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "networkx" },
     { name = "scikit-learn" },
     { name = "torch" },
     { name = "torch-geometric" },
@@ -204,7 +203,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "networkx", specifier = ">=3.4.2" },
     { name = "scikit-learn", specifier = ">=1.6.1" },
     { name = "torch", specifier = ">=2.6.0" },
     { name = "torch-geometric", specifier = ">=2.6.1" },

@@ -85,12 +85,16 @@ def train(model, predictor, data, optimizer):
 
 def compute_metrics(preds, labels, threshold=0.5):
     """Compute Precision, Recall, F1-Score with threshold"""
-    preds = (preds > threshold).cpu().numpy()  # Apply threshold to convert to binary
-    labels = labels.cpu().numpy()
+    if isinstance(preds, torch.Tensor):
+        preds = preds.cpu().numpy()
+    if isinstance(labels, torch.Tensor):
+        labels = labels.cpu().numpy()
 
-    precision = precision_score(labels, preds)
-    recall = recall_score(labels, preds)
-    f1 = f1_score(labels, preds)
+    binary_preds = (preds >= threshold).astype(int)
+
+    precision = precision_score(labels, binary_preds, zero_division=0)
+    recall = recall_score(labels, binary_preds, zero_division=0)
+    f1 = f1_score(labels, binary_preds, zero_division=0)
 
     return precision, recall, f1
 
@@ -234,141 +238,150 @@ def evaluate_baseline(data, method):
     return results
 
 
-def evaluate_node2vec(
-    data, dimensions=64, walk_length=30, num_walks=200, workers=4, p=1, q=1
-):
-    """Trains Node2Vec embeddings and evaluates link prediction using Logistic Regression."""
-    print("Evaluating baseline: Node2Vec")
-    # Build graph using ONLY training edges (similar to other baselines)
-    train_data = data.__class__()
-    train_data.edge_index = data.train_pos_edge_index
-    train_data.num_nodes = data.num_nodes
-    if not hasattr(train_data, "x") or train_data.x is None:
-        train_data.x = torch.ones((train_data.num_nodes, 1))  # Dummy
+# def evaluate_node2vec(
+#     data, dimensions=64, walk_length=30, num_walks=200, workers=4, p=1, q=1
+# ):
+#     """Trains Node2Vec embeddings and evaluates link prediction using Logistic Regression."""
+#     print("Evaluating baseline: Node2Vec")
+#     # Build graph using ONLY training edges (similar to other baselines)
+#     train_data = data.__class__()
+#     train_data.edge_index = data.train_pos_edge_index
+#     train_data.num_nodes = data.num_nodes
+#     if not hasattr(train_data, "x") or train_data.x is None:
+#         train_data.x = torch.ones((train_data.num_nodes, 1))  # Dummy
 
-    try:
-        # Directed=False for Cora usually
-        G_n2v = to_networkx(train_data, to_undirected=True, remove_self_loops=True)
-        G_n2v.add_nodes_from(range(data.num_nodes))  # Ensure all nodes are present
-    except Exception as e:
-        print(f"Error converting to NetworkX for Node2Vec: {e}")
-        G_n2v = nx.Graph()
-        G_n2v.add_nodes_from(range(data.num_nodes))
-        train_edges = data.train_pos_edge_index.cpu().numpy().T
-        G_n2v.add_edges_from(train_edges)
+#     try:
+#         # Directed=False for Cora usually
+#         G_n2v = to_networkx(train_data, to_undirected=True, remove_self_loops=True)
+#         G_n2v.add_nodes_from(range(data.num_nodes))  # Ensure all nodes are present
+#     except Exception as e:
+#         print(f"Error converting to NetworkX for Node2Vec: {e}")
+#         G_n2v = nx.Graph()
+#         G_n2v.add_nodes_from(range(data.num_nodes))
+#         train_edges = data.train_pos_edge_index.cpu().numpy().T
+#         G_n2v.add_edges_from(train_edges)
 
-    # --- Train Node2Vec ---
-    node2vec_model = Node2Vec(
-        G_n2v,
-        dimensions=dimensions,
-        walk_length=walk_length,
-        num_walks=num_walks,
-        workers=workers,
-        p=p,
-        q=q,
-        quiet=True,
-    )
-    # Train embeddings (use gensim Word2Vec)
-    # window=10, min_count=1, sg=1 (skip-gram) are common defaults
-    model = node2vec_model.fit(window=10, min_count=1, batch_words=4, sg=1)
-    embeddings = model.wv
+#     # --- Train Node2Vec ---
+#     node2vec_model = Node2Vec(
+#         G_n2v,
+#         dimensions=dimensions,
+#         walk_length=walk_length,
+#         num_walks=num_walks,
+#         workers=workers,
+#         p=p,
+#         q=q,
+#         quiet=True,
+#     )
+#     # Train embeddings (use gensim Word2Vec)
+#     # window=10, min_count=1, sg=1 (skip-gram) are common defaults
+#     model = node2vec_model.fit(window=10, min_count=1, batch_words=4, sg=1)
+#     embeddings = model.wv
 
-    # --- Prepare data for Logistic Regression Link Predictor ---
-    def get_link_features(edge_index, embeddings, operator="hadamard"):
-        features = []
-        embs_dim = embeddings.vector_size
-        for u, v in edge_index.T:  # Iterate through edges
-            # Check if nodes exist in embeddings (trained only on training graph nodes)
-            u_str, v_str = str(u), str(v)  # Node2Vec uses string node IDs
-            if u_str in embeddings and v_str in embeddings:
-                emb_u = embeddings[u_str]
-                emb_v = embeddings[v_str]
-                if operator == "hadamard":
-                    feature = emb_u * emb_v
-                elif operator == "l1":
-                    feature = np.abs(emb_u - emb_v)
-                elif operator == "l2":
-                    feature = (emb_u - emb_v) ** 2
-                elif operator == "avg":
-                    feature = (emb_u + emb_v) / 2.0
-                else:  # Default to hadamard
-                    feature = emb_u * emb_v
-                features.append(feature)
-            else:
-                # Handle missing nodes: append zero vector or skip
-                features.append(np.zeros(embs_dim))
-        return np.array(features)
+#     # --- Prepare data for Logistic Regression Link Predictor ---
+#     def get_link_features(edge_index, embeddings, operator="hadamard"):
+#         features = []
+#         embs_dim = embeddings.vector_size
+#         for u, v in edge_index.T:  # Iterate through edges
+#             # Check if nodes exist in embeddings (trained only on training graph nodes)
+#             u_str, v_str = str(u), str(v)  # Node2Vec uses string node IDs
+#             if u_str in embeddings and v_str in embeddings:
+#                 emb_u = embeddings[u_str]
+#                 emb_v = embeddings[v_str]
+#                 if operator == "hadamard":
+#                     feature = emb_u * emb_v
+#                 elif operator == "l1":
+#                     feature = np.abs(emb_u - emb_v)
+#                 elif operator == "l2":
+#                     feature = (emb_u - emb_v) ** 2
+#                 elif operator == "avg":
+#                     feature = (emb_u + emb_v) / 2.0
+#                 else:  # Default to hadamard
+#                     feature = emb_u * emb_v
+#                 features.append(feature)
+#             else:
+#                 # Handle missing nodes: append zero vector or skip
+#                 features.append(np.zeros(embs_dim))
+#         return np.array(features)
 
-    # Training features for Logistic Regression
-    # Use the same negative sampling strategy as GraphSAGE training *if possible*
-    # Or, just generate new negatives for simplicity here.
-    train_pos_feats = get_link_features(data.train_pos_edge_index.cpu(), embeddings)
-    # Generate negative samples for training the classifier
-    num_train_pos = data.train_pos_edge_index.size(1)
-    train_neg_edge_index = negative_sampling(
-        edge_index=data.edge_index,  # Sample from all edges
-        num_nodes=data.num_nodes,
-        num_neg_samples=num_train_pos,
-        method="sparse",
-    ).cpu()
-    train_neg_feats = get_link_features(train_neg_edge_index, embeddings)
+#     # Training features for Logistic Regression
+#     # Use the same negative sampling strategy as GraphSAGE training *if possible*
+#     # Or, just generate new negatives for simplicity here.
+#     train_pos_feats = get_link_features(data.train_pos_edge_index.cpu(), embeddings)
+#     # Generate negative samples for training the classifier
+#     num_train_pos = data.train_pos_edge_index.size(1)
+#     train_neg_edge_index = negative_sampling(
+#         edge_index=data.edge_index,  # Sample from all edges
+#         num_nodes=data.num_nodes,
+#         num_neg_samples=num_train_pos,
+#         method="sparse",
+#     ).cpu()
+#     train_neg_feats = get_link_features(train_neg_edge_index, embeddings)
 
-    X_train = np.concatenate([train_pos_feats, train_neg_feats], axis=0)
-    y_train = np.concatenate(
-        [np.ones(len(train_pos_feats)), np.zeros(len(train_neg_feats))]
-    )
+#     X_train = np.concatenate([train_pos_feats, train_neg_feats], axis=0)
+#     y_train = np.concatenate(
+#         [np.ones(len(train_pos_feats)), np.zeros(len(train_neg_feats))]
+#     )
 
-    # Train Logistic Regression classifier
-    lr = LogisticRegression(solver="liblinear", random_state=42, max_iter=100)
-    lr.fit(X_train, y_train)
+#     # Train Logistic Regression classifier
+#     lr = LogisticRegression(solver="liblinear", random_state=42, max_iter=100)
+#     lr.fit(X_train, y_train)
 
-    # --- Evaluate Node2Vec Link Prediction ---
-    results = {}
-    for split in ["val", "test"]:
-        pos_edge_index = getattr(data, f"{split}_pos_edge_index").cpu()
-        neg_edge_index = getattr(data, f"{split}_neg_edge_index").cpu()
+#     # --- Evaluate Node2Vec Link Prediction ---
+#     results = {}
+#     for split in ["val", "test"]:
+#         pos_edge_index = getattr(data, f"{split}_pos_edge_index").cpu()
+#         neg_edge_index = getattr(data, f"{split}_neg_edge_index").cpu()
 
-        pos_feats = get_link_features(pos_edge_index, embeddings)
-        neg_feats = get_link_features(neg_edge_index, embeddings)
+#         pos_feats = get_link_features(pos_edge_index, embeddings)
+#         neg_feats = get_link_features(neg_edge_index, embeddings)
 
-        X_eval = np.concatenate([pos_feats, neg_feats], axis=0)
-        y_eval = np.concatenate([np.ones(len(pos_feats)), np.zeros(len(neg_feats))])
+#         X_eval = np.concatenate([pos_feats, neg_feats], axis=0)
+#         y_eval = np.concatenate([np.ones(len(pos_feats)), np.zeros(len(neg_feats))])
 
-        # Predict probabilities
-        probs = lr.predict_proba(X_eval)[:, 1]  # Probability of class 1 (link exists)
+#         # Predict probabilities
+#         probs = lr.predict_proba(X_eval)[:, 1]  # Probability of class 1 (link exists)
 
-        # Calculate metrics
-        auc = roc_auc_score(y_eval, probs)
-        precision, recall, f1 = compute_metrics(
-            probs, y_eval
-        )  # Use default 0.5 threshold
-        mrr = compute_mrr(probs, y_eval)
+#         # Calculate metrics
+#         auc = roc_auc_score(y_eval, probs)
+#         precision, recall, f1 = compute_metrics(
+#             probs, y_eval
+#         )  # Use default 0.5 threshold
+#         mrr = compute_mrr(probs, y_eval)
 
-        results[split] = {
-            "auc": auc,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "mrr": mrr,
-        }
-        print(
-            f"... {split.capitalize()} Results - AUC: {auc:.4f}, F1: {f1:.4f}, MRR: {mrr:.4f}"
-        )
+#         results[split] = {
+#             "auc": auc,
+#             "precision": precision,
+#             "recall": recall,
+#             "f1": f1,
+#             "mrr": mrr,
+#         }
+#         print(
+#             f"... {split.capitalize()} Results - AUC: {auc:.4f}, F1: {f1:.4f}, MRR: {mrr:.4f}"
+#         )
 
-    return results
+#     return results
 
 
 # Initialize and train the model
+final_test_results = {}
+best_val_auc = 0
 model = GraphSAGE(in_channels=dataset.num_features, hidden_channels=64)
 predictor = LinkPredictor(in_channels=64)
 optimizer = torch.optim.Adam(
     list(model.parameters()) + list(predictor.parameters()), lr=0.01
 )
 
-for epoch in range(1, 101):
+for epoch in range(1, 10001):
     loss = train(model, predictor, data, optimizer)
     if epoch % 10 == 0:
         results = test(model, predictor, data)
+        val_result = results["val"]
+        test_result = results["test"]
+
+        if val_result["auc"] > best_val_auc:
+            best_val_auc = val_result["auc"]
+            final_test_results = test_result
+
         print(
             f"Epoch: {epoch:03d}, Loss: {loss:.4f}, "
             f'Val AUC: {results["val"]["auc"]:.4f}, Val Precision: {results["val"]["precision"]:.4f}, '
@@ -385,7 +398,7 @@ print("--- GraphSAGE Training Complete ---")
 print("\n--- Evaluating Baselines ---")
 cn_results = evaluate_baseline(data, "cn")
 pr_results = evaluate_baseline(data, "pagerank")
-n2v_results = evaluate_node2vec(data, dimensions=64)  # Match GraphSAGE hidden dim
+# n2v_results = evaluate_node2vec(data, dimensions=64)  # Match GraphSAGE hidden dim
 
 # --- Print Final Comparison ---
 print("\n--- Final Test Results Comparison ---")
@@ -412,9 +425,9 @@ print(
 )
 
 # Node2Vec
-test_n2v = n2v_results["test"]
-print(
-    f"{'Node2Vec+LR':<15} | {test_n2v['auc']:<10.4f} | {test_n2v['precision']:<10.4f} | {test_n2v['recall']:<10.4f} | {test_n2v['f1']:<10.4f} | {test_n2v['mrr']:<10.4f}"
-)
+# test_n2v = n2v_results["test"]
+# print(
+#     f"{'Node2Vec+LR':<15} | {test_n2v['auc']:<10.4f} | {test_n2v['precision']:<10.4f} | {test_n2v['recall']:<10.4f} | {test_n2v['f1']:<10.4f} | {test_n2v['mrr']:<10.4f}"
+# )
 
-print("-" * 70)
+# print("-" * 70)

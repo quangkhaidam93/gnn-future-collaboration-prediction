@@ -378,3 +378,43 @@ for epoch in range(1, 101):
             f'Test Recall: {results["test"]["recall"]:.4f}, Test F1: {results["test"]["f1"]:.4f}, '
             f'Test MRR: {results["test"]["mrr"]:.4f}'
         )
+
+print("--- GraphSAGE Training Complete ---")
+
+# Evaluate Baselines
+print("\n--- Evaluating Baselines ---")
+cn_results = evaluate_baseline(data, "cn")
+pr_results = evaluate_baseline(data, "pagerank")
+n2v_results = evaluate_node2vec(data, dimensions=64)  # Match GraphSAGE hidden dim
+
+# --- Print Final Comparison ---
+print("\n--- Final Test Results Comparison ---")
+print(
+    f"{'Method':<15} | {'AUC':<10} | {'Precision':<10} | {'Recall':<10} | {'F1':<10} | {'MRR':<10}"
+)
+print("-" * 70)
+
+# GraphSAGE (results from best validation epoch)
+print(
+    f"{'GraphSAGE':<15} | {final_test_results.get('auc', 0):<10.4f} | {final_test_results.get('precision', 0):<10.4f} | {final_test_results.get('recall', 0):<10.4f} | {final_test_results.get('f1', 0):<10.4f} | {final_test_results.get('mrr', 0):<10.4f}"
+)
+
+# Common Neighbors
+test_cn = cn_results["test"]
+print(
+    f"{'Common Neigh.':<15} | {test_cn['auc']:<10.4f} | {test_cn['precision']:<10.4f} | {test_cn['recall']:<10.4f} | {test_cn['f1']:<10.4f} | {test_cn['mrr']:<10.4f}"
+)
+
+# PageRank
+test_pr = pr_results["test"]
+print(
+    f"{'PageRank (Prod)':<15} | {test_pr['auc']:<10.4f} | {test_pr['precision']:<10.4f} | {test_pr['recall']:<10.4f} | {test_pr['f1']:<10.4f} | {test_pr['mrr']:<10.4f}"
+)
+
+# Node2Vec
+test_n2v = n2v_results["test"]
+print(
+    f"{'Node2Vec+LR':<15} | {test_n2v['auc']:<10.4f} | {test_n2v['precision']:<10.4f} | {test_n2v['recall']:<10.4f} | {test_n2v['f1']:<10.4f} | {test_n2v['mrr']:<10.4f}"
+)
+
+print("-" * 70)
